@@ -8,13 +8,13 @@ import (
 	"os"
 	"fmt"
 	"bufio"
+	"log"
 )
 
 var (
 	profile  *Profile
 	once     sync.Once
-	memStats *runtime.MemStats
-	stop bool
+	memStats *runtime.MemStats = &runtime.MemStats{}
 )
 
 type ProfileData struct {
@@ -49,8 +49,6 @@ type ProfileData struct {
 	LastGC       uint64 // 上次运行的绝对时间（纳秒）
 	PauseTotalNs uint64
 	NumGC        uint32
-	EnableGC     bool
-	DebugGC      bool
 
 	InUseBytes   int64 // 正在使用的字节数
 	InUseObjects int64 // 正在使用的对象数
@@ -60,6 +58,7 @@ type ProfileData struct {
 type Profile struct {
 	cycle    int
 	dumpFile string
+	shutdown chan int
 }
 
 func GetProfile(dump string, cycle int) *Profile {
@@ -81,7 +80,7 @@ func GetProfile(dump string, cycle int) *Profile {
 	return profile
 }
 
-func (p *Profile) load() ([]byte, error){
+func (p *Profile) Load() ([]byte, error){
 	runtime.ReadMemStats(memStats)
 
 	data := &ProfileData{}
@@ -126,7 +125,7 @@ func (p *Profile) load() ([]byte, error){
 func (p *Profile) save(data []byte) {
 	f, err := os.OpenFile(p.dumpFile, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, os.ModePerm)
 	if err != nil {
-		fmt.Printf("Error to open file:%v \n", err)
+		log.Fatalf("Error to open file:%v \n", err)
 		return
 	}
 	defer f.Close()
@@ -137,8 +136,13 @@ func (p *Profile) save(data []byte) {
 }
 
 func (p *Profile) dumpProfile() {
-	for !stop {
-		data, err := p.load()
+	for {
+		select {
+			case <- p.shutdown:
+				log.Println("Exit profile")
+				break
+		}
+		data, err := p.Load()
 		if err != nil {
 			fmt.Printf("Load profile json error:%v", err)
 		} else {
@@ -149,10 +153,9 @@ func (p *Profile) dumpProfile() {
 }
 
 func (p *Profile) Start() {
-	stop = false
-	p.dumpProfile()
+	go p.dumpProfile()
 }
 
 func (p *Profile) Stop() {
-	stop = true
+	p.shutdown <- 1
 }
